@@ -53,4 +53,4 @@ def get_dataloaders(df_train, df_val, train_path, img_size=224, mean=DEFAULT_RES
         batch_size=batch_size
     )
 
-    return train_dataloader, single_val_dataloader, single_train_dataloader
+    return train_dataloader, single_train_dataloader, single_val_dataloader
