@@ -3,6 +3,8 @@ from PIL import Image
 
 import numpy as np
 from torch.utils.data import DataLoader, Dataset
+from torch.utils.data.sampler import BatchSampler
+
 
 
 class TripletNetworkDataset(Dataset):
@@ -74,3 +76,43 @@ def _load_img(img_path, bounding_box=None):
     img = Image.open(img_path).convert("RGB")    
     
     return img
+
+
+class BalancedBatchSampler(BatchSampler):
+    def __init__(self, dataset, n_classes, n_samples):
+        self.dataset = dataset
+        self.labels = dataset["Id"].values
+        self.labels_set = list(set(self.labels))
+    
+        self.label_to_indices = {label: np.where(self.labels == label)[0]
+                                 for label in self.labels_set}
+        for l in self.labels_set:
+            np.random.shuffle(self.label_to_indices[l])
+        self.used_label_indices_count = {label: 0 for label in self.labels_set}
+        self.count = 0
+        self.n_classes = n_classes
+        self.n_samples = n_samples
+        self.batch_size = self.n_samples * self.n_classes
+        self.length = len(dataset)
+
+    def __iter__(self):
+        self.count = 0
+        while self.count + self.batch_size < self.length:
+            classes = np.random.choice(self.labels_set, self.n_classes, replace=False)
+            indices = []
+            for cl in classes:
+                idx_for_class = self.label_to_indices[cl]
+                if len(idx_for_class) < self.n_samples:
+                    indices.extend(np.random.choice(self.label_to_indices[cl], self.n_samples, replace=True))
+                else:
+                    indices.extend(self.label_to_indices[cl][
+                                   self.used_label_indices_count[cl]:self.used_label_indices_count[cl] + self.n_samples])
+                    self.used_label_indices_count[cl] += self.n_samples
+                if self.used_label_indices_count[cl] + self.n_samples > len(self.label_to_indices[cl]):
+                    np.random.shuffle(self.label_to_indices[cl])
+                    self.used_label_indices_count[cl] = 0
+            yield indices
+            self.count += self.n_classes * self.n_samples
+
+    def __len__(self):
+        return self.length // self.batch_size

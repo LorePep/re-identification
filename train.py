@@ -31,6 +31,8 @@ import matplotlib.pyplot as plt
 from models import TripletNetwork
 from losses import TripletLoss
 from dataloaders import get_dataloaders
+from triplet_selectors import HardBatchTripletSelector, pdist
+from datasets import BalancedBatchSampler
 
 COLOR_PALETTE = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728',
               '#9467bd', '#8c564b', '#e377c2', '#7f7f7f',
@@ -50,30 +52,36 @@ np.random.seed(42)
 @click.option("--verbose", "-v", is_flag=True, help="Verbose execution.")
 @click.option("--output-dir", type=str, help="Output dir.", required=True)
 @click.option("--num-epochs", "-e", type=int, help="Output dir.", default=100)
-def train(train_path, labels, boxes, output_dir, num_epochs, verbose):
+@click.option("--hard", "-h", is_flag=True, help="Hard batch mining.")
+def train(train_path, labels, boxes, output_dir, num_epochs, hard, verbose):
     df_train, df_val = _get_toy_dataset(labels, boxes)
     if verbose:
         logging.info("Train size: {}, validation size: {}".format(len(df_train), len(df_val)))
     
-    train_dl, single_train_dl, val_dl  = get_dataloaders(df_train, df_val, train_path)
-
+    sampler = None
+    if hard:
+        sampler = BalancedBatchSampler(df_train, n_classes=4, n_samples=4)
+    train_dl, single_train_dl, val_dl  = get_dataloaders(df_train, df_val, train_path, sampler)
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     if verbose:
         logging.info("Using device {}".format(device))
     
-
+    
     net = TripletNetwork(embedding_size=128).to(device)
-    criterion = TripletLoss(margin=1)
+    criterion = TripletLoss()
+    selector = None
+    if hard:
+        selector = HardBatchTripletSelector()
     optimizer = optim.Adam(net.parameters(), lr = 1e-4)
 
     net, history = _train(model=net, optimizer=optimizer, criterion=criterion, 
     train_dataloader=train_dl, single_train_dataloader=single_train_dl, 
-    val_dataloader=val_dl, num_epochs=num_epochs, save_path=output_dir, device=device)
+    val_dataloader=val_dl, num_epochs=num_epochs, save_path=output_dir, device=device, selector=selector)
     _plot_history(history)
 
 
-def _train(model, optimizer, criterion, train_dataloader, single_train_dataloader, val_dataloader, num_epochs, save_path, device, patience=10):    
+def _train(model, optimizer, criterion, train_dataloader, single_train_dataloader, val_dataloader, num_epochs, save_path, device, selector, patience=20):    
     best_accuracy = 0.0
     history_emb_norm_50 = []
     history_emb_norm_95 = []
@@ -86,23 +94,30 @@ def _train(model, optimizer, criterion, train_dataloader, single_train_dataloade
         model.train()
         running_loss = 0.0
         for data in tqdm(train_dataloader):
-            images, _ = data
-            images = tuple(img.to(device) for img in images)
+            images, labels = data
 
             optimizer.zero_grad()
-            anchor_embeddings, positive_embeddings, negative_embeddings = model(images)
-            norm = np.linalg.norm(anchor_embeddings.detach().cpu().numpy(), axis=1)
-            history_emb_norm_50.append(np.percentile(norm, 50))
-            history_emb_norm_95.append(np.percentile(norm, 95))
-            
-            dists = _pdist(anchor_embeddings, anchor_embeddings).detach().cpu().numpy()
-            history_emb_dist_50.append(np.percentile(dists, 50))
-            history_emb_dist_95.append(np.percentile(dists, 95))
+            if selector:
+                embeddings = model.get_embeddings(images.to(device))
+                anchor, positives, negatives = selector.get_triplets(embeddings, labels)
+                loss = criterion(anchor, positives, negatives)
+            else:
+                images = tuple(img.to(device) for img in images)
+                anchor_embeddings, positive_embeddings, negative_embeddings = model(images)
+                loss = criterion(anchor_embeddings, positive_embeddings, negative_embeddings)
+                embeddings = anchor_embeddings
 
-            loss = criterion(anchor_embeddings, positive_embeddings, negative_embeddings)
             running_loss += loss.item() * images[0].shape[0]
             loss.backward()
             optimizer.step()
+            
+            norm = np.linalg.norm(embeddings.detach().cpu().numpy(), axis=1)
+            history_emb_norm_50.append(np.percentile(norm, 50))
+            history_emb_norm_95.append(np.percentile(norm, 95))
+            
+            dists = pdist(embeddings, embeddings).detach().cpu().numpy()
+            history_emb_dist_50.append(np.percentile(dists, 50))
+            history_emb_dist_95.append(np.percentile(dists, 95))
 
         accuracy = _eval_model(model, single_train_dataloader, val_dataloader, epoch)
         if accuracy >= best_accuracy:
@@ -110,28 +125,18 @@ def _train(model, optimizer, criterion, train_dataloader, single_train_dataloade
             best_accuracy = accuracy
             patience_counter = 0
         else:
-            patience += 1
+            patience_counter += 1
         print(f"Epoch {epoch}")
         print(f"Training Loss: {running_loss / len(train_dataloader.dataset)}")
         print(f"Validation Accuracy: {accuracy}, Best Accuracy: {best_accuracy}")
         
-        if patience == patience_counter:
+        if patience_counter == patience:
             model.load_state_dict(torch.load(os.path.join(save_path, "./best.pth")))
             return model, dict(history_emb_norm_50=history_emb_norm_50, history_emb_norm_95=history_emb_norm_95, 
             history_emb_dist_50=history_emb_dist_50, history_emb_dist_95=history_emb_dist_95)
 
     return model, dict(history_emb_norm_50=history_emb_norm_50, history_emb_norm_95=history_emb_norm_95, 
             history_emb_dist_50=history_emb_dist_50, history_emb_dist_95=history_emb_dist_95)
-
-
-def _pdist(emb1, emb2):
-    m, n = emb1.shape[0], emb2.shape[0]
-    emb1_pow = torch.pow(emb1, 2).sum(dim = 1, keepdim = True).expand(m, n)
-    emb2_pow = torch.pow(emb2, 2).sum(dim = 1, keepdim = True).expand(n, m).t()
-    dist_mtx = emb1_pow + emb2_pow
-    dist_mtx = dist_mtx.addmm_(1, -2, emb1, emb2.t())
-    dist_mtx = dist_mtx.clamp(min = 1e-12).sqrt()
-    return dist_mtx
 
 
 def _extract_embeddings(dataloader, model, embedding_sz=128, device="cuda"):

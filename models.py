@@ -8,7 +8,7 @@ def unfreeze_all(model_params):
         
         
 class TripletNetwork(nn.Module):
-    def __init__(self, embedding_size):
+    def __init__(self, embedding_size, return_triplets=False):
         super(TripletNetwork, self).__init__()
         self.model = models.resnet34(pretrained=True)
         self.model.fc = nn.Sequential(
