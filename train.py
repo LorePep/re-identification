@@ -3,30 +3,16 @@ import os
 import pandas as pd
 import logging
 
-import torchvision
-import torchvision.datasets as dset
-
-from torch.utils.data import DataLoader,Dataset
 import matplotlib.pyplot as plt
-import torchvision.utils
 from sklearn.model_selection import train_test_split
-from torch.optim import lr_scheduler
 import numpy as np
-import random
 import torch
-from torch.autograd import Variable
-import PIL.ImageOps    
-import torch.nn as nn
 from torch import optim
-import torch.nn.functional as F
-from torchvision import models
 from tqdm import tqdm
 from sklearn.neighbors import NearestNeighbors
 from sklearn.metrics import accuracy_score
 
 from tqdm.autonotebook import tqdm
-from torch.optim.lr_scheduler import _LRScheduler
-import matplotlib.pyplot as plt
 
 from models import TripletNetwork
 from losses import TripletLoss
@@ -55,6 +41,7 @@ np.random.seed(42)
 @click.option("--hard", "-h", is_flag=True, help="Hard batch mining.")
 def train(train_path, labels, boxes, output_dir, num_epochs, hard, verbose):
     df_train, df_val = _get_toy_dataset(labels, boxes)
+
     if verbose:
         logging.info("Train size: {}, validation size: {}".format(len(df_train), len(df_val)))
     
