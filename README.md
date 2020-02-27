@@ -6,9 +6,6 @@ For more info refer to [this blog post](https://lorenzopeppoloni.com/reidentific
 
 The code uses the dataset from the  [Humpback Whale Identification Kaggle competition](https://www.kaggle.com/c/humpback-whale-identification). Bounding boxes are also included ([as computed by Martin Piotte](https://www.kaggle.com/martinpiotte/bounding-box-model/output) during the competition).
 
-## Installation
-
-
 ## How to run
 
 ```bash
