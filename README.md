@@ -1,5 +1,5 @@
 # re-identification
-Code for re-identification from images. This code demonstrate how to use Triple Loss and online hard batch mining
+Code for re-identification from images. This code demonstrate how to use Triple Loss and online hard batch mining in Pytorch
 to solve the re-identification problem.
 
 For more info refer to [this blog post](https://lorenzopeppoloni.com/reidentification/).
